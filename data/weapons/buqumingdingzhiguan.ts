@@ -2,7 +2,7 @@
 
 import { Weapon } from "@/types";
 
-export const UNSHAKABLE_CROWN: Weapon = {
+export const BUQUMINGDINGZHIGUAN: Weapon = {
   baseStats: {
     name: "不屈命定之冠",
     rarity: 5,

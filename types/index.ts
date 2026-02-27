@@ -15,7 +15,7 @@ export type ElementType =
 
 export type ScalingTemplate = "攻击" | "生命" | "防御" | "共鸣效率";
 
-export type DamageType = "普攻" | "重击" | "共鸣技能" | "共鸣解放" | "效应伤害" | "震谐伤害" | "无伤害";
+export type DamageType = "普攻" | "重击" | "共鸣技能" | "共鸣解放" | "效应伤害" | "震谐伤害" | "治疗" | "无伤害";
 
 export type SkillCategory = 
   | "常态攻击" 
@@ -64,7 +64,7 @@ export interface CharacterBaseStats {
   baseCritRate: number; // 默认 5%
   baseCritDMG: number; // 默认 150%
   baseHealBonus: number; // 默认 0%
-  baseElementDMG: number; // 默认 30%
+  baseElementDMG: number; // 默认 20%
   baseEnergyRegen: number; // 默认 100%
   
   // 图片资源
@@ -77,6 +77,7 @@ export interface CharacterSkill {
   damageType: DamageType;
   skillCategory: SkillCategory;
   multiplierList: number[]; // 对应技能等级的倍率
+  flatValueList?: number[]; // 治疗技能的扁平值（不参与倍率计算，直接累加到最终结果）
   zoneBonus: number; // 乘区加成，默认0
 }
 
@@ -89,7 +90,7 @@ export interface CharacterPassiveSkill {
   name: string;
   description: string;
   enabled: boolean;
-  effectScope: "面板加成" | "倍率提升" | "伤害加深" | "防御乘区" | "抗性乘区" | "次数乘区" | "队友加成" | "全队加成";
+  effectScope: "面板加成" | "倍率提升" | "伤害加深" | "伤害加成" | "防御乘区" | "抗性乘区" | "次数乘区" | "队友加成" | "全队加成";
   effects: {
     zoneType?: MultiplierZone;
     value?: number;
@@ -118,7 +119,7 @@ export interface CharacterPassiveSkill {
 export interface CharacterOutroSkill {
   name: string;
   description: string;
-  effectScope: "面板加成" | "倍率提升" | "伤害加深" | "防御乘区" | "抗性乘区" | "次数乘区" | "全队加成";
+  effectScope: "面板加成" | "倍率提升" | "伤害加深" | "伤害加成" | "防御乘区" | "抗性乘区" | "次数乘区" | "全队加成";
   effects: {
     zoneType?: MultiplierZone;
     value?: number;
@@ -133,7 +134,8 @@ export interface Character {
   skills: CharacterSkill[];
   branchStats: CharacterBranchStats;
   passiveSkills: CharacterPassiveSkill[];
-  outroSkill?: CharacterOutroSkill; // 延奏技能（队友加成）
+  outroSkill?: CharacterOutroSkill; // 延奏技能（队友加成，单效果）
+  outroSkills?: CharacterOutroSkill[]; // 延奏技能列表（多效果角色，如莫宁）
   // 效应层数：记录角色携带的效应及其层数（部分效应，不同角色可能只有特定效应）
   effectStacks?: Partial<Record<EffectType, number>>;
 }
@@ -163,10 +165,12 @@ export interface WeaponSkill {
   enabled: boolean;
   effects: Array<{
     name: string;
-    type: "属性加成" | "乘区加成" | "面板加成";
+    type: "属性加成" | "乘区加成";
     effect_Type?: MultiplierZone;
     enabled?: boolean; // 部分效果可独立开关
-    valuesByResonance: number[]; // 对应谐振等级1-5的数值
+    stacks?: number;    // 当前层数（通过UI控制，最大 maxStacks）
+    maxStacks?: number; // 最大可叠加层数（>1 时在页面显示层数控件）
+    valuesByResonance: number[]; // 对应谐振等级1-5的单层数值
     // 效应条件：当角色携带指定效应且层数满足条件时生效
     effectCondition?: {
       effectType: EffectType; // 需要的效应类型
@@ -319,6 +323,10 @@ export interface DamageCalculationInput {
   critMode: "期望" | "暴击" | "不暴击";
   effectStacks?: Record<string, number>; // 角色效应层数（如风蚀效应等）
   teammates?: TeammateConfig[]; // 队友配置
+  // 莫宁特殊配置
+  moningConfig?: {
+    energyRegen: number; // 莫宁共鸣效率百分比数值（如 150 代表 150%）
+  };
   // 爱弥斯特殊配置
   aimisiConfig?: {
     resonanceMode?: "震谐" | "聚爆"; // 共鸣模态
@@ -329,6 +337,12 @@ export interface DamageCalculationInput {
     jubaoEffectStacks?: number; // 聚爆效应层数
     xingchenJubaoEnabled?: boolean; // 星屑共振·聚爆
   };
+  // 额外加成（可手动添加，应用到指定乘区）
+  extraBonuses?: Array<{
+    zone: "倍率提升" | "伤害加深" | "伤害加成" | "无视防御" | "无视抗性";
+    value: number; // 小数形式，如 0.10 代表 10%
+    label?: string; // 备注说明
+  }>;
 }
 
 export interface DamageCalculationResult {
@@ -340,7 +354,6 @@ export interface DamageCalculationResult {
   damageBonus: number;
   defenseMultiplier: number;
   resistanceMultiplier: number;
-  hitsMultiplier: number;
   finalDamage: number;
   combatStats: CombatStats;
   // 详细计算信息

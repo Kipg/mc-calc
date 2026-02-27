@@ -17,7 +17,7 @@ export function getCharacterImagePath(imageKey?: string): string {
  */
 export function getWeaponImagePath(imageKey?: string): string {
   if (!imageKey) return "";
-  return `/weapons/TL_${imageKey}_UI.png`;
+  return `/weapons/T_${imageKey}_UI.png`;
 }
 
 /**

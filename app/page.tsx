@@ -35,9 +35,9 @@ export default function Home() {
     type?: "skill" | "zhenxieInterference"; // skill为普通技能，zhenxieInterference为震谐干涉标记
   }>>([]);
   const [showRotationConfig, setShowRotationConfig] = useState(false);
-  const [viewMode, setViewMode] = useState<"技能名字"|"伤害类型">("技能名字");
+  const [viewMode, setViewMode] = useState<"技能名字"|"伤害类型"|"技能类型">("技能名字");
   const [damageViewMode, setDamageViewMode] = useState<"期望"|"暴击"|"不暴击">("期望");
-  const [selectedSkillForDetail, setSelectedSkillForDetail] = useState<string | null>(null);
+  const [expandedSkillDetails, setExpandedSkillDetails] = useState<Set<string>>(new Set());
   // 乘区展开状态
   const [expandedMultiplier, setExpandedMultiplier] = useState<string | null>(null);
   
@@ -46,6 +46,22 @@ export default function Home() {
     "风蚀效应": 0
   });
   
+  // 莫宁特殊状态：共鸣效率（已不再动态计算，保留状态以兼容旧配置）
+  const [moningEnergyRegen, setMoningEnergyRegen] = useState(260);
+
+  // 怪物配置（等级、元素抗性）
+  const [targetLevel, setTargetLevel] = useState(100);
+  const [enemyResistance, setEnemyResistance] = useState(10); // 百分比整数，如 10 = 10%
+
+  // 额外加成（手动添加到各乘区）
+  const [extraBonuses, setExtraBonuses] = useState<Array<{
+    id: number;
+    zone: "倍率提升" | "伤害加深" | "伤害加成" | "无视防御" | "无视抗性";
+    value: number; // 百分比，如 30 = 30%
+    label: string;
+  }>>([]);
+  const [extraBonusCounter, setExtraBonusCounter] = useState(1);
+
   // 爱弥斯专用状态
   const [aimisiResonanceMode, setAimisiResonanceMode] = useState<"震谐" | "聚爆">("震谐");
   const [aimisiZhenxieTrackStacks, setAimisiZhenxieTrackStacks] = useState(0); // 震谐轨迹层数 0-30
@@ -146,7 +162,7 @@ export default function Home() {
       },
       skill: {
         ...weap.skill,
-        effects: weap.skill.effects.map(effect => ({ ...effect }))
+        effects: weap.skill.effects.map((effect: any) => ({ ...effect }))
       }
     });
   }, [selectedWeaponName, weaponLevel, weaponResonance]);
@@ -205,14 +221,14 @@ export default function Home() {
       echoes,
       activeEchoSets,
       echoSetEnabled,
-      targetLevel: 100,
-      enemyResistance: 0.2,
+      targetLevel,
+      enemyResistance: enemyResistance / 100,
       selectedSkill: character.skills[0],
       critMode: "期望",
       effectStacks,
-      teammates: teammateConfigs
+      teammates: teammateConfigs,
     });
-  }, [character, weapon, echoes, activeEchoSets, echoSetEnabled, effectStacks, teammateConfigs]);
+  }, [character, weapon, echoes, activeEchoSets, echoSetEnabled, effectStacks, teammateConfigs, targetLevel, enemyResistance]);
 
   // 计算技能轮换伤害
   const rotationDamage = useMemo(() => {
@@ -252,12 +268,13 @@ export default function Home() {
         echoes,
         activeEchoSets,
         echoSetEnabled,
-        targetLevel: 100,
-        enemyResistance: 0.2,
+        targetLevel,
+        enemyResistance: enemyResistance / 100,
         selectedSkill: item.skill,
         critMode: item.critMode,
         effectStacks,
         teammates: teammateConfigs,
+        extraBonuses: extraBonuses.map(b => ({ ...b, value: b.value / 100 })),
         aimisiConfig: character.baseStats.name === "爱弥斯" ? {
           resonanceMode: aimisiResonanceMode,
           zhenxieTrackStacks: aimisiZhenxieTrackStacks,
@@ -285,7 +302,7 @@ export default function Home() {
       results,
       totalDamage
     };
-  }, [character, weapon, echoes, skillRotation, activeEchoSets, echoSetEnabled, damageViewMode, effectStacks, teammateConfigs, 
+  }, [character, weapon, echoes, skillRotation, activeEchoSets, echoSetEnabled, damageViewMode, effectStacks, teammateConfigs, targetLevel, enemyResistance, extraBonuses,
       aimisiResonanceMode, aimisiZhenxieTrackStacks, aimisiXingchenZhenxieEnabled, 
       aimisiJubaoTrackStacks, aimisiJubaoEffectStacks, aimisiXingchenJubaoEnabled]);
 
@@ -308,20 +325,21 @@ export default function Home() {
         value,
         color: colorPalette[colorIndex++ % colorPalette.length]
       }));
-    } else {
+    } else if (viewMode === "伤害类型") {
       const grouped = new Map<DamageType, number>();
       rotationDamage.results.forEach(r => {
         const current = grouped.get(r.skill.damageType) || 0;
         grouped.set(r.skill.damageType, current + r.totalDamage);
       });
       
-      const colors = {
+      const colors: Record<string, string> = {
         "普攻": "#3b82f6",
         "重击": "#8b5cf6",
         "共鸣技能": "#ec4899",
         "共鸣解放": "#f59e0b",
-        "效应伤害": "#FF6347", // 橙红色（主要为聚爆效应）
-        "震谐伤害": "#FFD700", // 金黄色
+        "效应伤害": "#FF6347",
+        "震谐伤害": "#FFD700",
+        "治疗": "#22c55e",
         "无伤害": "#6b7280"
       };
       
@@ -329,6 +347,27 @@ export default function Home() {
         name: type,
         value,
         color: colors[type] || "#6b7280"
+      }));
+    } else {
+      // 技能类型（skillCategory）
+      const grouped = new Map<SkillCategory, number>();
+      rotationDamage.results.forEach(r => {
+        const current = grouped.get(r.skill.skillCategory) || 0;
+        grouped.set(r.skill.skillCategory, current + r.totalDamage);
+      });
+      
+      const colors: Record<string, string> = {
+        "常态攻击": "#3b82f6",
+        "共鸣技能": "#8b5cf6",
+        "共鸣回路": "#ec4899",
+        "共鸣解放": "#f59e0b",
+        "变奏技能": "#10b981"
+      };
+      
+      return Array.from(grouped.entries()).map(([category, value]) => ({
+        name: category,
+        value,
+        color: colors[category] || "#6b7280"
       }));
     }
   }, [rotationDamage, viewMode]);
@@ -772,9 +811,9 @@ export default function Home() {
                                 ))}
                               </div>
                             )}
-                            {skill.effects.zoneType && (
+                            {skill.effectScope && skill.effectScope !== "面板加成" && (
                               <div className="text-blue-700">
-                                乘区类型: {skill.effects.zoneType}
+                                乘区类型: {skill.effectScope}
                               </div>
                             )}
                             {skill.effects.conditional && skill.conditionalUI && (
@@ -908,7 +947,9 @@ export default function Home() {
                         )}
                         
                         {weapon.skill.effects && weapon.skill.effects.map((effect: any, idx: number) => {
-                          const value = effect.valuesByResonance[weaponResonance - 1];
+                          const baseValue = effect.valuesByResonance[weaponResonance - 1];
+                          const effectiveStacks = effect.stacks ?? 1;
+                          const value = baseValue * effectiveStacks;
                           let displayText = "";
                           let conditionMet = true;
                           
@@ -932,7 +973,7 @@ export default function Home() {
                             displayText = `全属性伤害提升: +${(value * 100).toFixed(0)}%`;
                           } else if (effect.name.includes("无视防御") || effect.effect_Type === "无视防御") {
                             displayText = `无视防御: ${(value * 100).toFixed(0)}%`;
-                          } else if (effect.name.includes("无视") && effect.name.includes("抗性") || effect.effect_Type === "无视抗性") {
+                          } else if ((effect.name.includes("无视") && effect.name.includes("抗性")) || effect.effect_Type === "无视抗性") {
                             displayText = `${effect.name}: ${(value * 100).toFixed(0)}%`;
                           } else if (effect.name.includes("伤害加深") || effect.effect_Type === "伤害加深") {
                             displayText = `伤害加深: +${(value * 100).toFixed(0)}%`;
@@ -940,15 +981,63 @@ export default function Home() {
                               displayText += ` (需${effect.effectCondition.effectType}≥${effect.effectCondition.minStacks}层)`;
                             }
                           } else {
-                            displayText = `${effect.name}: ${(value * 100).toFixed(0)}%`;
+                            displayText = `${effect.name}: +${(value * 100).toFixed(1)}%`;
                           }
                           
+                          const isEffectEnabled = effect.enabled !== false;
+                          
                           return (
-                            <div key={idx} className={`text-sm ${conditionMet ? 'text-blue-700' : 'text-gray-400'}`}>
-                              • {displayText}{damageTypeRestriction}
-                              {!conditionMet && effect.effectCondition && (
-                                <span className="ml-2 text-xs text-red-500">(条件未满足)</span>
+                            <div key={idx} className={`rounded p-2 border ${isEffectEnabled && conditionMet ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-50'}`}>
+                              {/* 效果名称 + 独立开关 */}
+                              <div className="flex items-center justify-between mb-1">
+                                <span className={`text-sm font-medium ${isEffectEnabled && conditionMet ? 'text-blue-800' : 'text-gray-400'}`}>
+                                  {effect.name}
+                                </span>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                  <span className="text-xs text-gray-500">启用</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={isEffectEnabled}
+                                    onChange={(e) => {
+                                      const newEffects = weapon.skill.effects.map((ef: any, i: number) =>
+                                        i === idx ? { ...ef, enabled: e.target.checked } : ef
+                                      );
+                                      setWeapon({ ...weapon, skill: { ...weapon.skill, effects: newEffects } });
+                                    }}
+                                    className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500"
+                                  />
+                                </label>
+                              </div>
+                              {/* 层数控件（仅当 maxStacks > 1 时显示） */}
+                              {effect.maxStacks && effect.maxStacks > 1 && (
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs text-gray-500 whitespace-nowrap">层数:</span>
+                                  <input
+                                    type="range"
+                                    min={1}
+                                    max={effect.maxStacks}
+                                    value={effectiveStacks}
+                                    onChange={(e) => {
+                                      const newEffects = weapon.skill.effects.map((ef: any, i: number) =>
+                                        i === idx ? { ...ef, stacks: Number(e.target.value) } : ef
+                                      );
+                                      setWeapon({ ...weapon, skill: { ...weapon.skill, effects: newEffects } });
+                                    }}
+                                    className="flex-1 h-1.5 accent-blue-500"
+                                  />
+                                  <span className="text-xs font-bold text-blue-700 w-8 text-right">{effectiveStacks}/{effect.maxStacks}</span>
+                                </div>
                               )}
+                              {/* 数值展示 */}
+                              <div className={`text-sm ${isEffectEnabled && conditionMet ? 'text-blue-700' : 'text-gray-400'}`}>
+                                • {displayText}{damageTypeRestriction}
+                                {!conditionMet && effect.effectCondition && (
+                                  <span className="ml-2 text-xs text-red-500">(条件未满足)</span>
+                                )}
+                                {!isEffectEnabled && (
+                                  <span className="ml-2 text-xs text-gray-400">(已禁用)</span>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -1635,7 +1724,7 @@ export default function Home() {
                       </div>
                       
                       {/* 延奏技能 */}
-                      {teammateChar.outroSkill && (
+                      {(teammateChar.outroSkill || ((teammateChar as any).outroSkills?.length > 0)) && (
                         <div className="border-t pt-4">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="font-semibold text-gray-700">延奏技能</h4>
@@ -1655,10 +1744,30 @@ export default function Home() {
                               <span className="text-sm text-gray-600">启用</span>
                             </label>
                           </div>
-                          <div className="bg-white p-3 rounded">
-                            <p className="text-sm font-medium text-gray-800">{teammateChar.outroSkill.name}</p>
-                            <p className="text-xs text-gray-600 mt-1">{teammateChar.outroSkill.description}</p>
-                          </div>
+                          {[...(((teammateChar as any).outroSkills) || []), ...(teammateChar.outroSkill ? [teammateChar.outroSkill] : [])].map((outro: any) => (
+                            <div key={outro.name} className="bg-white p-3 rounded mb-2">
+                              <p className="text-sm font-medium text-gray-800">{outro.name}</p>
+                              <p className="text-xs text-gray-600 mt-1">{outro.description}</p>
+                              {/* 延奏技能效果可视化（statBonus） */}
+                              {teammate.enabledOutro && outro.effects?.statBonus && (
+                                <div className="mt-2 p-2 bg-purple-50 rounded text-xs">
+                                  <span className="font-medium text-purple-800">效果：</span>
+                                  <div className="mt-1 space-y-0.5">
+                                    <div className="text-purple-700">乘区类型: {outro.effectScope}</div>
+                                    {Object.entries(outro.effects.statBonus).map(([key, val]) => (
+                                      <div key={key} className="text-purple-700">{key}: +{((val as number) * 100).toFixed(0)}%</div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {/* 莫宁干涉标记：固定 40% */}
+                              {outro.name === "干涉标记" && teammate.enabledOutro && (
+                                <div className="mt-2 p-2 bg-purple-50 rounded text-xs text-purple-700 border border-purple-200">
+                                  固定伤害加成 <span className="font-bold">+40%</span>（默认260%共鸣效率以上时已达上限）
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       )}
                       
@@ -1804,6 +1913,127 @@ export default function Home() {
             </div>
           </div>
 
+          {/* 怪物信息配置 */}
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 border border-red-200 shadow-lg">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">怪物信息</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">怪物等级</label>
+                <input
+                  type="number"
+                  value={targetLevel}
+                  onChange={(e) => setTargetLevel(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm"
+                  min={1}
+                  max={130}
+                  step={1}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  元素抗性 %
+                  <span className="ml-2 text-xs text-gray-500">（参考：默认全抗性10%，深塔50%额外，全息70%额外）</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    value={enemyResistance}
+                    onChange={(e) => setEnemyResistance(Number(e.target.value))}
+                    className="w-28 px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm"
+                    min={-100}
+                    max={100}
+                    step={1}
+                  />
+                  <span className="text-sm text-gray-500">%</span>
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => setEnemyResistance(10)} className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200">默认 10%</button>
+                    <button onClick={() => setEnemyResistance(60)} className="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200">深塔 60%</button>
+                    <button onClick={() => setEnemyResistance(80)} className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">全息 80%</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 text-xs text-gray-500 bg-gray-50 p-2 rounded">
+              当前防御乘区：{character && ((1 - (792 + 8 * targetLevel) / ((792 + 8 * targetLevel) + 800 + 8 * character.baseStats.level)) * 100).toFixed(2)}%　
+              当前抗性乘区：{(100 - enemyResistance).toFixed(0)}%
+            </div>
+          </div>
+
+          {/* 额外加成配置 */}
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 border border-amber-200 shadow-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">额外加成</h2>
+              <button
+                onClick={() => {
+                  setExtraBonuses([...extraBonuses, {
+                    id: extraBonusCounter,
+                    zone: "伤害加成",
+                    value: 0,
+                    label: ""
+                  }]);
+                  setExtraBonusCounter(extraBonusCounter + 1);
+                }}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-all duration-200 hover:scale-105 active:scale-95 text-sm"
+              >
+                + 添加加成
+              </button>
+            </div>
+            {extraBonuses.length === 0 ? (
+              <p className="text-gray-400 text-sm text-center py-4">暂无额外加成，点击"添加加成"按钮增加</p>
+            ) : (
+              <div className="space-y-3">
+                {extraBonuses.map((bonus) => (
+                  <div key={bonus.id} className="flex items-center gap-3 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                    <select
+                      value={bonus.zone}
+                      onChange={(e) => {
+                        setExtraBonuses(extraBonuses.map(b =>
+                          b.id === bonus.id ? { ...b, zone: e.target.value as any } : b
+                        ));
+                      }}
+                      className="px-2 py-1 border border-gray-300 rounded bg-white text-sm"
+                    >
+                      <option value="倍率提升">倍率提升</option>
+                      <option value="伤害加深">伤害加深</option>
+                      <option value="伤害加成">伤害加成</option>
+                      <option value="无视防御">无视防御</option>
+                      <option value="无视抗性">无视抗性</option>
+                    </select>
+                    <input
+                      type="number"
+                      value={bonus.value}
+                      onChange={(e) => {
+                        setExtraBonuses(extraBonuses.map(b =>
+                          b.id === bonus.id ? { ...b, value: Number(e.target.value) } : b
+                        ));
+                      }}
+                      className="w-20 px-2 py-1 border border-gray-300 rounded bg-white text-sm"
+                      step={0.1}
+                    />
+                    <span className="text-sm text-gray-500">%</span>
+                    <input
+                      type="text"
+                      value={bonus.label}
+                      onChange={(e) => {
+                        setExtraBonuses(extraBonuses.map(b =>
+                          b.id === bonus.id ? { ...b, label: e.target.value } : b
+                        ));
+                      }}
+                      placeholder="备注（可选）"
+                      className="flex-1 px-2 py-1 border border-gray-300 rounded bg-white text-sm"
+                    />
+                    <button
+                      onClick={() => setExtraBonuses(extraBonuses.filter(b => b.id !== bonus.id))}
+                      className="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-sm border border-red-300"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* 公式说明（可折叠，带动画） */}
           <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 border border-blue-200 shadow-lg overflow-hidden">
             <button
@@ -1843,7 +2073,7 @@ export default function Home() {
                       { key: 'crit', label: '暴击', desc: '暴击率 × 暴击伤害 + (1 - 暴击率)' },
                       { key: 'deepen', label: '伤害加深', desc: '来自武器、固有技能的伤害加深' },
                       { key: 'bonus', label: '伤害加成', desc: '元素伤害 + 普攻/重击/技能/解放加成' },
-                      { key: 'defense', label: '防御', desc: '1 - 有效防御/(有效防御 + 800 + 8×角色等级)' },
+                      { key: 'defense', label: '防御', desc: '1 - 有效防御/(有效防御 + 800 + 8×角色等级)，有效防御 = (792+8×怪物等级)×(1-无视防御)' },
                       { key: 'resistance', label: '抗性', desc: '1 - (怪物抗性 - 抗性削减)' },
                       { key: 'hits', label: '次数', desc: '技能命中次数乘区' }
                     ].map((multiplier, index) => (
@@ -1995,6 +2225,14 @@ export default function Home() {
                   >
                     伤害类型
                   </button>
+                  <button
+                    onClick={() => setViewMode("技能类型")}
+                    className={`px-4 py-2 rounded-lg transition-all duration-200 hover:scale-105 active:scale-95 text-sm ${
+                      viewMode === "技能类型" ? "bg-blue-500 text-white" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                  >
+                    技能类型
+                  </button>
                 </div>
               </div>
               
@@ -2047,20 +2285,22 @@ export default function Home() {
                       <div className="flex-1">
                         <p className="font-medium text-gray-800">{result.skillName}</p>
                         <p className="text-sm text-gray-600">
+                          <span className="inline-block px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs mr-1">{result.skill.skillCategory}</span>
+                          <span className="inline-block px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs mr-2">{result.skill.damageType}</span>
                           释放{result.count}次 · {result.critMode} · 
                           单次: <span className="font-semibold">{result.singleDamage.toFixed(0)}</span> · 
                           总计: <span className="font-semibold text-blue-600">{result.totalDamage.toFixed(0)}</span>
                         </p>
                       </div>
                       <button
-                        onClick={() => setSelectedSkillForDetail(selectedSkillForDetail === result.skillName ? null : result.skillName)}
+                        onClick={() => setExpandedSkillDetails(prev => { const next = new Set(prev); next.has(result.skillName) ? next.delete(result.skillName) : next.add(result.skillName); return next; })}
                         className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-all duration-200 hover:scale-105 active:scale-95 text-sm"
                       >
-                        {selectedSkillForDetail === result.skillName ? "收起" : "查看"}
+                        {expandedSkillDetails.has(result.skillName) ? "收起" : "查看"}
                       </button>
                     </div>
                     
-                    {selectedSkillForDetail === result.skillName && result.damageDetail && (
+                    {expandedSkillDetails.has(result.skillName) && result.damageDetail && (
                       <div className="mt-3 p-3 bg-white rounded space-y-2 text-sm border border-gray-200">
                         {/* 检查是否为震谐伤害或效应伤害 - 使用特殊显示 */}
                         {(result.skill.damageType === "震谐伤害" || result.skill.damageType === "效应伤害") ? (
@@ -2109,12 +2349,12 @@ export default function Home() {
                             
                             {/* 技能倍率 */}
                             <div className="p-2 bg-gray-50 rounded">
-                              <p className="font-semibold text-gray-700">技能倍率: <span className="font-mono">{result.damageDetail.skillMultiplier.toFixed(4)}</span></p>
+                              <p className="font-semibold text-gray-700">技能倍率: <span className="font-mono">{(result.damageDetail.skillMultiplier ?? 0).toFixed(4)}</span></p>
                             </div>
                             
                             {/* 倍率提升 */}
                             <div className="p-2 bg-blue-50 rounded">
-                              <p className="font-semibold text-gray-700">倍率提升: <span className="font-mono">{result.damageDetail.multiplierBoost.toFixed(4)}</span></p>
+                              <p className="font-semibold text-gray-700">倍率提升: <span className="font-mono">+{(result.damageDetail.multiplierBoost * 100).toFixed(2)}%</span> <span className="text-xs text-gray-500">(即乘以 {(1 + result.damageDetail.multiplierBoost).toFixed(4)})</span></p>
                               {result.damageDetail.details?.multiplierBoostSources && result.damageDetail.details.multiplierBoostSources.length > 0 && (
                                 <ul className="mt-1 space-y-0.5 text-xs text-gray-600">
                                   {result.damageDetail.details.multiplierBoostSources.map((source, i) => (
@@ -2132,7 +2372,7 @@ export default function Home() {
                             
                             {/* 伤害加深 */}
                             <div className="p-2 bg-red-50 rounded">
-                              <p className="font-semibold text-gray-700">伤害加深: <span className="font-mono">{result.damageDetail.damageDeepen.toFixed(4)}</span></p>
+                              <p className="font-semibold text-gray-700">伤害加深: <span className="font-mono">+{(result.damageDetail.damageDeepen * 100).toFixed(2)}%</span> <span className="text-xs text-gray-500">(即乘以 {(1 + result.damageDetail.damageDeepen).toFixed(4)})</span></p>
                               {result.damageDetail.details?.damageDeepenSources && result.damageDetail.details.damageDeepenSources.length > 0 && (
                                 <ul className="mt-1 space-y-0.5 text-xs text-gray-600">
                                   {result.damageDetail.details.damageDeepenSources.map((source, i) => (
@@ -2169,7 +2409,7 @@ export default function Home() {
                             {/* 抗性乘区 */}
                             <div className="p-2 bg-yellow-50 rounded">
                               <p className="font-semibold text-gray-700">抗性乘区: <span className="font-mono">{result.damageDetail.resistanceMultiplier.toFixed(4)}</span></p>
-                              <p className="text-xs text-gray-600">基础抗性: 20%</p>
+                              <p className="text-xs text-gray-600">基础抗性: {enemyResistance}%</p>
                               {result.damageDetail.details?.resistanceReductionSources && result.damageDetail.details.resistanceReductionSources.length > 0 && (
                                 <ul className="mt-1 space-y-0.5 text-xs text-gray-600">
                                   {result.damageDetail.details.resistanceReductionSources.map((source, i) => (
@@ -2179,24 +2419,18 @@ export default function Home() {
                               )}
                             </div>
                             
-                            {/* 次数乘区 */}
-                            <div className="p-2 bg-gray-50 rounded">
-                              <p className="font-semibold text-gray-700">次数乘区: <span className="font-mono">{result.damageDetail.hitsMultiplier.toFixed(4)}</span></p>
-                            </div>
-                            
                             {/* 最终公式 */}
                             <div className="pt-2 border-t-2 border-blue-300 font-semibold text-blue-600">
                               <p className="mb-1">最终伤害计算：</p>
                               <p className="text-xs leading-relaxed break-all">
                                 {result.damageDetail.baseDamage.toFixed(2)} × 
-                                {result.damageDetail.skillMultiplier.toFixed(3)} × 
-                                {result.damageDetail.multiplierBoost.toFixed(3)} × 
+                                {(result.damageDetail.skillMultiplier ?? 0).toFixed(3)} × 
+                                {(1 + result.damageDetail.multiplierBoost).toFixed(3)} × 
                                 {result.damageDetail.critMultiplier.toFixed(3)} × 
-                                {result.damageDetail.damageDeepen.toFixed(3)} × 
+                                {(1 + result.damageDetail.damageDeepen).toFixed(3)} × 
                                 {result.damageDetail.damageBonus.toFixed(3)} × 
                                 {result.damageDetail.defenseMultiplier.toFixed(3)} × 
-                                {result.damageDetail.resistanceMultiplier.toFixed(3)} × 
-                                {result.damageDetail.hitsMultiplier.toFixed(3)}
+                                {result.damageDetail.resistanceMultiplier.toFixed(3)}
                               </p>
                               <p className="mt-2 text-lg">
                                 = <span className="text-2xl">{result.singleDamage.toFixed(0)}</span>
@@ -2255,8 +2489,8 @@ export default function Home() {
                         const baseInput = {
                           character,
                           weapon,
-                          targetLevel: 100,
-                          enemyResistance: 0.2,
+                          targetLevel,
+                          enemyResistance: enemyResistance / 100,
                           echoSetEnabled,
                           effectStacks
                         };
@@ -2287,8 +2521,8 @@ export default function Home() {
                         const baseInput = {
                           character,
                           weapon,
-                          targetLevel: 100,
-                          enemyResistance: 0.2,
+                          targetLevel,
+                          enemyResistance: enemyResistance / 100,
                           echoSetEnabled,
                           effectStacks
                         };
@@ -2330,8 +2564,8 @@ export default function Home() {
                         const baseInput = {
                           character,
                           weapon,
-                          targetLevel: 100,
-                          enemyResistance: 0.2,
+                          targetLevel,
+                          enemyResistance: enemyResistance / 100,
                           echoSetEnabled,
                           effectStacks
                         };
@@ -2350,7 +2584,9 @@ export default function Home() {
                   </div>
                   
                   {/* 权重结果表格 */}
-                  {subStatWeights.length > 0 && (
+                  {subStatWeights.length > 0 && (() => {
+                    const maxDamageIncrease = Math.max(...subStatWeights.map(w => w.damageIncrease), 1e-9);
+                    return (
                     <div className="mt-4 overflow-x-auto">
                       <table className="w-full border-collapse bg-white rounded-lg overflow-hidden shadow">
                         <thead>
@@ -2359,10 +2595,14 @@ export default function Home() {
                             <th className="px-4 py-3 text-left font-semibold">副词条</th>
                             <th className="px-4 py-3 text-left font-semibold">平均值</th>
                             <th className="px-4 py-3 text-left font-semibold">伤害提升</th>
+                            <th className="px-4 py-3 text-left font-semibold">归一化权重</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {subStatWeights.map((weight, index) => (
+                          {subStatWeights.map((weight, index) => {
+                            const normalized = weight.damageIncrease / maxDamageIncrease;
+                            const barWidth = Math.max(0, Math.min(100, normalized * 100));
+                            return (
                             <tr 
                               key={weight.statType} 
                               className={`border-b border-gray-200 hover:bg-gray-50 transition-colors ${
@@ -2388,12 +2628,27 @@ export default function Home() {
                                   +{weight.damageIncreasePercent}
                                 </span>
                               </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-2 min-w-[120px]">
+                                  <div className="flex-1 bg-gray-200 rounded-full h-2">
+                                    <div
+                                      className="h-2 rounded-full bg-gradient-to-r from-blue-400 to-purple-500 transition-all"
+                                      style={{ width: `${barWidth}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-sm font-semibold text-gray-700 w-10 text-right">
+                                    {normalized.toFixed(2)}
+                                  </span>
+                                </div>
+                              </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -2427,6 +2682,7 @@ export default function Home() {
                   elementType={(CHARACTERS as any)[name].baseStats.elementType}
                   variant="select"
                   onClick={() => {
+                    setSkillRotation([]);
                     setSelectedCharName(name);
                     setShowCharSelect(false);
                   }}

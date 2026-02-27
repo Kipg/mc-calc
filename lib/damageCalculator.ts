@@ -2,6 +2,7 @@
 
 import {
   Character,
+  CharacterOutroSkill,
   Weapon,
   Echo,
   EchoSetBonus,
@@ -12,12 +13,8 @@ import {
   ElementType
 } from "@/types";
 import { ECHO_SETS } from "@/data/echoSets";
-import {
-  calculateZhenxieDamage,
-  calculateJubaoEffectDamage,
-  calculateZhenxieResponseDamage,
-  getJubaoUpperLimit
-} from "./aimisiDamageHelper";
+import { calculateZhenxieDamage, calculateZhenxieResponseDamage } from "./zhenxieCalculator";
+import { calculateJubaoEffectDamage, getJubaoUpperLimit } from "./effectCalculator";
 
 /**
  * 获取等级对应的属性值
@@ -25,6 +22,15 @@ import {
 function getStatByLevel(level: number, levelList: number[], statList: number[]): number {
   const index = levelList.indexOf(level);
   return index >= 0 ? statList[index] : statList[statList.length - 1];
+}
+
+/**
+ * 获取角色的延奏技能列表（兼容单条和数组两种定义方式）
+ */
+function getOutroSkills(character: Character): CharacterOutroSkill[] {
+  if (character.outroSkills && character.outroSkills.length > 0) return character.outroSkills;
+  if (character.outroSkill) return [character.outroSkill];
+  return [];
 }
 
 /**
@@ -139,43 +145,81 @@ export function calculateCombatStats(input: DamageCalculationInput): CombatStats
   const weaponATK = getStatByLevel(weapon.baseStats.weaponLevel, weapon.baseStats.levelList, weapon.baseStats.baseATKList);
   const weaponSecondaryStat = getStatByLevel(weapon.baseStats.weaponLevel, weapon.baseStats.levelList, weapon.baseStats.secondaryStatList);
   
-  // 武器技能加成
-  let weaponHPBonus = 0;
-  let weaponATKBonus = 0;
+  // 武器技能属性加成（全类型覆盖 + 叠加层数支持）
+  const weaponStatBonus: Record<string, number> = {};
   if (weapon.skill.enabled) {
     weapon.skill.effects.forEach(effect => {
-      if (effect.type === "属性加成" && checkWeaponEffectCondition(effect)) {
-        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1];
+      if (effect.type === "属性加成" && effect.enabled !== false && checkWeaponEffectCondition(effect)) {
+        const baseValue = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1];
+        const value = baseValue * (effect.stacks ?? 1);
         if (effect.name.includes("生命")) {
-          weaponHPBonus += value;
+          weaponStatBonus["大生命"] = (weaponStatBonus["大生命"] || 0) + value;
         } else if (effect.name.includes("攻击")) {
-          weaponATKBonus += value;
+          weaponStatBonus["大攻击"] = (weaponStatBonus["大攻击"] || 0) + value;
+        } else if (effect.name.includes("防御")) {
+          weaponStatBonus["大防御"] = (weaponStatBonus["大防御"] || 0) + value;
+        } else if (effect.name.includes("共鸣效率")) {
+          weaponStatBonus["共鸣效率"] = (weaponStatBonus["共鸣效率"] || 0) + value;
+        } else if (effect.name.includes("暴击伤害")) {
+          weaponStatBonus["暴击伤害"] = (weaponStatBonus["暴击伤害"] || 0) + value;
+        } else if (effect.name.includes("暴击率")) {
+          weaponStatBonus["暴击率"] = (weaponStatBonus["暴击率"] || 0) + value;
+        } else if (effect.name.includes("共鸣解放")) {
+          weaponStatBonus["共鸣解放伤害加成"] = (weaponStatBonus["共鸣解放伤害加成"] || 0) + value;
+        } else if (effect.name.includes("普攻")) {
+          weaponStatBonus["普攻伤害加成"] = (weaponStatBonus["普攻伤害加成"] || 0) + value;
+        } else if (effect.name.includes("重击")) {
+          weaponStatBonus["重击伤害加成"] = (weaponStatBonus["重击伤害加成"] || 0) + value;
+        } else if (effect.name.includes("共鸣技能")) {
+          weaponStatBonus["共鸣技能伤害加成"] = (weaponStatBonus["共鸣技能伤害加成"] || 0) + value;
+        } else if (effect.name.includes("全属性伤害")) {
+          weaponStatBonus["全属性伤害"] = (weaponStatBonus["全属性伤害"] || 0) + value;
         }
       }
     });
   }
   
+  // 队友延奏技能的面板加成（如维里奈大攻击）
+  const teammateOutroStatBonus: Record<string, number> = {};
+  if (input.teammates) {
+    input.teammates.forEach(teammate => {
+      if (teammate.enabledOutro) {
+        getOutroSkills(teammate.character).forEach(outro => {
+          if (outro.effectScope === "面板加成" && outro.effects.statBonus) {
+            Object.entries(outro.effects.statBonus).forEach(([stat, value]) => {
+              teammateOutroStatBonus[stat] = (teammateOutroStatBonus[stat] || 0) + value;
+            });
+          }
+        });
+      }
+    });
+  }
+
   // 计算百分比加成
   const totalHPPercent = 
     (branchStats.branch2.stat === "大生命" ? branchStats.branch2.value : 0) +
     (echoStats["大生命"] || 0) +
     (setBonuses["大生命"] || 0) +
-    weaponHPBonus +
-    (weapon.baseStats.secondaryStatType === "大生命" ? weaponSecondaryStat : 0);
+    (weaponStatBonus["大生命"] || 0) +
+    (weapon.baseStats.secondaryStatType === "大生命" ? weaponSecondaryStat : 0) +
+    (teammateOutroStatBonus["大生命"] || 0);
   
   const totalATKPercent = 
     (branchStats.branch1.stat === "大攻击" ? branchStats.branch1.value : 0) +
     (branchStats.branch2.stat === "大攻击" ? branchStats.branch2.value : 0) +
     (echoStats["大攻击"] || 0) +
     (setBonuses["大攻击"] || 0) +
-    weaponATKBonus +
-    (weapon.baseStats.secondaryStatType === "大攻击" ? weaponSecondaryStat : 0);
+    (weaponStatBonus["大攻击"] || 0) +
+    (weapon.baseStats.secondaryStatType === "大攻击" ? weaponSecondaryStat : 0) +
+    (teammateOutroStatBonus["大攻击"] || 0);
   
   const totalDEFPercent = 
     (branchStats.branch1.stat === "大防御" ? branchStats.branch1.value : 0) +
     (branchStats.branch2.stat === "大防御" ? branchStats.branch2.value : 0) +
     (echoStats["大防御"] || 0) +
-    (setBonuses["大防御"] || 0);
+    (setBonuses["大防御"] || 0) +
+    (weaponStatBonus["大防御"] || 0) +
+    (teammateOutroStatBonus["大防御"] || 0);
   
   // 计算扁平值
   const flatHP = echoStats["小生命"] || 0;
@@ -194,34 +238,39 @@ export function calculateCombatStats(input: DamageCalculationInput): CombatStats
     (branchStats.branch2.stat === "暴击率" ? branchStats.branch2.value : 0) +
     (echoStats["暴击率"] || 0) +
     (setBonuses["暴击率"] || 0) +
+    (weaponStatBonus["暴击率"] || 0) +
     (weapon.baseStats.secondaryStatType === "暴击率" ? weaponSecondaryStat : 0);
   
-  // 角色固有技能的面板加成（如暴击伤害）
-  let passiveSkillCritDMGBonus = 0;
+  // 角色固有技能的面板加成（通用处理：暴击伤害、共鸣效率等）
+  const passiveStatBonus: Record<string, number> = {};
   passiveSkills.forEach(passive => {
     if (passive.enabled && passive.effectScope === "面板加成" && passive.effects.statBonus) {
-      // 处理 conditional 条件加成
       if (passive.effects.conditional && passive.conditionalUI) {
+        // 条件加成（如随风蚀层数变化的暴击伤害）
         const effectStacks = input.effectStacks || {};
-        const stateKey = passive.conditionalUI.stateKey; // 使用 conditionalUI.stateKey 作为 key
+        const stateKey = passive.conditionalUI.stateKey;
         const stateValue = effectStacks[stateKey] || 0;
         const conditionalValue = passive.effects.conditional.values[stateValue] || 0;
-        
-        // 遍历 statBonus 中的所有属性
-        Object.entries(passive.effects.statBonus).forEach(([stat, _baseValue]) => {
-          if (stat === "暴击伤害" && conditionalValue > 0) {
-            passiveSkillCritDMGBonus += conditionalValue;
-          }
+        if (conditionalValue > 0) {
+          Object.entries(passive.effects.statBonus).forEach(([stat]) => {
+            passiveStatBonus[stat] = (passiveStatBonus[stat] || 0) + conditionalValue;
+          });
+        }
+      } else {
+        // 简单静态加成
+        Object.entries(passive.effects.statBonus).forEach(([stat, value]) => {
+          passiveStatBonus[stat] = (passiveStatBonus[stat] || 0) + (value as number);
         });
       }
     }
   });
-  
+
   const critDMG = 
     baseStats.baseCritDMG +
     (echoStats["暴击伤害"] || 0) +
     (setBonuses["暴击伤害"] || 0) +
-    passiveSkillCritDMGBonus +
+    (passiveStatBonus["暴击伤害"] || 0) +
+    (weaponStatBonus["暴击伤害"] || 0) +
     (weapon.baseStats.secondaryStatType === "暴击伤害" ? weaponSecondaryStat : 0);
   
   // 其他属性
@@ -233,22 +282,28 @@ export function calculateCombatStats(input: DamageCalculationInput): CombatStats
   const energyRegen = 
     baseStats.baseEnergyRegen +
     (echoStats["共鸣效率"] || 0) +
-    (setBonuses["共鸣效率"] || 0);
+    (setBonuses["共鸣效率"] || 0) +
+    (weapon.baseStats.secondaryStatType === "共鸣效率" ? weaponSecondaryStat : 0) +
+    (weaponStatBonus["共鸣效率"] || 0) +
+    (passiveStatBonus["共鸣效率"] || 0);
   
-  // 元素伤害加成
+  // 元素伤害加成（全属性伤害作为通用加成）
   const elementKey = `${baseStats.elementType}加成`;
   const elementDMG = 
     baseStats.baseElementDMG +
     (echoStats[elementKey] || 0) +
     (echoStats[baseStats.elementType] || 0) +
     (setBonuses[elementKey] || 0) +
-    (setBonuses[baseStats.elementType] || 0);
+    (setBonuses[baseStats.elementType] || 0) +
+    (passiveStatBonus[elementKey] || 0) +
+    (passiveStatBonus[baseStats.elementType] || 0) +
+    (weaponStatBonus["全属性伤害"] || 0);
   
-  // 伤害类型加成
-  const normalATKBonus = (echoStats["普攻伤害加成"] || 0) + (setBonuses["普攻伤害加成"] || 0);
-  const heavyATKBonus = (echoStats["重击伤害加成"] || 0) + (setBonuses["重击伤害加成"] || 0);
-  const skillBonus = (echoStats["共鸣技能伤害加成"] || 0) + (setBonuses["共鸣技能伤害加成"] || 0);
-  const liberationBonus = (echoStats["共鸣解放伤害加成"] || 0) + (setBonuses["共鸣解放伤害加成"] || 0);
+  // 伤害类型加成（含武器技能加成）
+  const normalATKBonus = (echoStats["普攻伤害加成"] || 0) + (setBonuses["普攻伤害加成"] || 0) + (weaponStatBonus["普攻伤害加成"] || 0);
+  const heavyATKBonus = (echoStats["重击伤害加成"] || 0) + (setBonuses["重击伤害加成"] || 0) + (weaponStatBonus["重击伤害加成"] || 0);
+  const skillBonus = (echoStats["共鸣技能伤害加成"] || 0) + (setBonuses["共鸣技能伤害加成"] || 0) + (weaponStatBonus["共鸣技能伤害加成"] || 0);
+  const liberationBonus = (echoStats["共鸣解放伤害加成"] || 0) + (setBonuses["共鸣解放伤害加成"] || 0) + (weaponStatBonus["共鸣解放伤害加成"] || 0);
   
   return {
     totalATK,
@@ -298,13 +353,12 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
     return {
       baseDamage: finalDamage,
       skillMultiplier: 1,
-      multiplierBoost: 1,
+      multiplierBoost: 0,
       critMultiplier: 1,
-      damageDeepen: 1,
+      damageDeepen: 0,
       damageBonus: 1,
       defenseMultiplier: 1,
       resistanceMultiplier: 1,
-      hitsMultiplier: 1,
       finalDamage,
       combatStats,
       details: {
@@ -336,13 +390,12 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
     return {
       baseDamage: finalDamage,
       skillMultiplier: 1,
-      multiplierBoost: 1,
+      multiplierBoost: 0,
       critMultiplier: 1,
-      damageDeepen: 1,
+      damageDeepen: 0,
       damageBonus: 1,
       defenseMultiplier: 1,
       resistanceMultiplier: 1,
-      hitsMultiplier: 1,
       finalDamage,
       combatStats,
       details: {
@@ -392,13 +445,13 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   // ========== 2. 技能倍率乘区 ==========
   const skillMultiplier = selectedSkill.multiplierList[selectedSkill.skillLevel - 1];
   
-  // ========== 3. 倍率提升乘区 ==========
-  let multiplierBoost = 1.0;
+  // ========== 3. 倍率提升乘区（加式叠加，各来源直接累加）==========
+  let multiplierBoost = 0.0;
   const multiplierBoostSources: string[] = [];
   
   // 角色固有技能的倍率提升
   character.passiveSkills.forEach(passive => {
-    if (passive.enabled && passive.effects.zoneType === "倍率提升") {
+    if (passive.enabled && passive.effectScope === "倍率提升") {
       if (passive.effects.conditional) {
         // 带条件的倍率提升（如风蚀效应层数）
         const effectStacks = input.effectStacks || {};
@@ -406,11 +459,11 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
         const stateValue = effectStacks[effectType] || 0;
         const conditionalValue = passive.effects.conditional.values[stateValue] || 0;
         if (conditionalValue > 0) {
-          multiplierBoost *= (1 + conditionalValue);
+          multiplierBoost += conditionalValue;
           multiplierBoostSources.push(`${passive.name}: +${(conditionalValue * 100).toFixed(1)}%`);
         }
       } else if (passive.effects.value) {
-        multiplierBoost *= (1 + passive.effects.value);
+        multiplierBoost += passive.effects.value;
         multiplierBoostSources.push(`${passive.name}: +${(passive.effects.value * 100).toFixed(1)}%`);
       }
     }
@@ -419,24 +472,24 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   // 队友延奏技能的倍率提升
   if (input.teammates) {
     input.teammates.forEach(teammate => {
-      if (teammate.enabledOutro && teammate.character.outroSkill) {
-        const outro = teammate.character.outroSkill;
-        if (outro.effects.zoneType === "倍率提升") {
-          // 检查是否影响当前技能类别
-          if (!outro.affectedSkillTypes || outro.affectedSkillTypes.includes(selectedSkill.skillCategory)) {
-            if (outro.effects.value) {
-              multiplierBoost *= (1 + outro.effects.value);
-              multiplierBoostSources.push(`${teammate.characterName}-${outro.name}: +${(outro.effects.value * 100).toFixed(1)}%`);
+      if (teammate.enabledOutro) {
+        getOutroSkills(teammate.character).forEach(outro => {
+          if (outro.effectScope === "倍率提升") {
+            if (!outro.affectedSkillTypes || outro.affectedSkillTypes.includes(selectedSkill.skillCategory)) {
+              if (outro.effects.value) {
+                multiplierBoost += outro.effects.value;
+                multiplierBoostSources.push(`${teammate.characterName}-${outro.name}: +${(outro.effects.value * 100).toFixed(1)}%`);
+              }
             }
           }
-        }
+        });
       }
       
       // 队友固有技能的全队加成（倍率提升）
       teammate.character.passiveSkills.forEach((passive, index) => {
         if (teammate.enabledPassives[index] && passive.enabled && passive.effectScope === "全队加成" && passive.effects.zoneType === "倍率提升") {
           if (passive.effects.value) {
-            multiplierBoost *= (1 + passive.effects.value);
+            multiplierBoost += passive.effects.value;
             multiplierBoostSources.push(`${teammate.characterName}-${passive.name}: +${(passive.effects.value * 100).toFixed(1)}%`);
           }
         }
@@ -447,11 +500,12 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   // 武器技能的倍率提升
   if (weapon.skill.enabled) {
     weapon.skill.effects.forEach(effect => {
-      if (effect.effect_Type === "倍率提升" && 
+      if (effect.effect_Type === "倍率提升" &&
+          effect.enabled !== false &&
           checkWeaponEffectCondition(effect) && 
           checkWeaponEffectDamageType(effect, selectedSkill.damageType)) {
-        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1];
-        multiplierBoost *= (1 + value);
+        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1] * (effect.stacks ?? 1);
+        multiplierBoost += value;
         multiplierBoostSources.push(`${weapon.skill.name}-${effect.name}: +${(value * 100).toFixed(1)}%`);
       }
     });
@@ -471,15 +525,15 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
       break;
   }
   
-  // ========== 5. 伤害加深乘区 ==========
-  let damageDeepen = 1.0;
+  // ========== 5. 伤害加深乘区（加式叠加，各来源直接累加）==========
+  let damageDeepen = 0.0;
   const damageDeepenSources: string[] = [];
   
   // 角色固有技能的伤害加深
   character.passiveSkills.forEach(passive => {
-    if (passive.enabled && passive.effects.zoneType === "伤害加深") {
+    if (passive.enabled && passive.effectScope === "伤害加深") {
       if (passive.effects.value) {
-        damageDeepen *= (1 + passive.effects.value);
+        damageDeepen += passive.effects.value;
         damageDeepenSources.push(`${passive.name}: +${(passive.effects.value * 100).toFixed(1)}%`);
       }
     }
@@ -488,24 +542,24 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   // 队友延奏技能的伤害加深
   if (input.teammates) {
     input.teammates.forEach(teammate => {
-      if (teammate.enabledOutro && teammate.character.outroSkill) {
-        const outro = teammate.character.outroSkill;
-        if (outro.effects.zoneType === "伤害加深") {
-          // 检查是否影响当前技能类别
-          if (!outro.affectedSkillTypes || outro.affectedSkillTypes.includes(selectedSkill.skillCategory)) {
-            if (outro.effects.value) {
-              damageDeepen *= (1 + outro.effects.value);
-              damageDeepenSources.push(`${teammate.characterName}-${outro.name}: +${(outro.effects.value * 100).toFixed(1)}%`);
+      if (teammate.enabledOutro) {
+        getOutroSkills(teammate.character).forEach(outro => {
+          if (outro.effectScope === "伤害加深") {
+            if (!outro.affectedSkillTypes || outro.affectedSkillTypes.includes(selectedSkill.skillCategory)) {
+              if (outro.effects.value) {
+                damageDeepen += outro.effects.value;
+                damageDeepenSources.push(`${teammate.characterName}-${outro.name}: +${(outro.effects.value * 100).toFixed(1)}%`);
+              }
             }
           }
-        }
+        });
       }
       
       // 队友固有技能的全队加成（伤害加深）
       teammate.character.passiveSkills.forEach((passive, index) => {
         if (teammate.enabledPassives[index] && passive.enabled && passive.effectScope === "全队加成" && passive.effects.zoneType === "伤害加深") {
           if (passive.effects.value) {
-            damageDeepen *= (1 + passive.effects.value);
+            damageDeepen += passive.effects.value;
             damageDeepenSources.push(`${teammate.characterName}-${passive.name}: +${(passive.effects.value * 100).toFixed(1)}%`);
           }
         }
@@ -516,11 +570,12 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   // 武器技能的伤害加深
   if (weapon.skill.enabled) {
     weapon.skill.effects.forEach(effect => {
-      if (effect.effect_Type === "伤害加深" && 
+      if (effect.effect_Type === "伤害加深" &&
+          effect.enabled !== false &&
           checkWeaponEffectCondition(effect) && 
           checkWeaponEffectDamageType(effect, selectedSkill.damageType)) {
-        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1];
-        damageDeepen *= (1 + value);
+        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1] * (effect.stacks ?? 1);
+        damageDeepen += value;
         damageDeepenSources.push(`${weapon.skill.name}-${effect.name}: +${(value * 100).toFixed(1)}%`);
       }
     });
@@ -566,21 +621,39 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   
   // 固有技能的伤害加成
   character.passiveSkills.forEach(passive => {
-    if (passive.enabled && passive.effects.zoneType === "伤害加成") {
+    if (passive.enabled && passive.effectScope === "伤害加成") {
       if (passive.effects.value) {
         damageBonus += passive.effects.value;
         damageBonusSources.push(`${passive.name}: +${(passive.effects.value * 100).toFixed(1)}%`);
       }
     }
   });
-  
+
+  // 队友延奏技能的伤害加成
+  if (input.teammates) {
+    input.teammates.forEach(teammate => {
+      if (teammate.enabledOutro) {
+        getOutroSkills(teammate.character).forEach(outro => {
+          if (outro.effectScope === "伤害加成") {
+            // 干溉标记使用固定值 40%（默认 260% 共鸣效率以上时已达上限）
+            const value = outro.effects.value || 0;
+            if (value > 0) {
+              damageBonus += value;
+              damageBonusSources.push(`${teammate.characterName}-${outro.name}: +${(value * 100).toFixed(1)}%`);
+            }
+          }
+        });
+      }
+    });
+  }
+
   // ========== 7. 防御乘区 ==========
   let defenseIgnore = 0;
   const defenseIgnoreSources: string[] = [];
   
   // 角色固有技能的无视防御
   character.passiveSkills.forEach(passive => {
-    if (passive.enabled && passive.effects.zoneType === "无视防御") {
+    if (passive.enabled && passive.effectScope === "防御乘区") {
       if (passive.effects.value) {
         defenseIgnore += passive.effects.value;
         defenseIgnoreSources.push(`${passive.name}: ${(passive.effects.value * 100).toFixed(1)}%`);
@@ -588,22 +661,37 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
     }
   });
   
+  // 队友延奏技能的无视防御
+  if (input.teammates) {
+    input.teammates.forEach(teammate => {
+      if (teammate.enabledOutro) {
+        getOutroSkills(teammate.character).forEach(outro => {
+          if (outro.effectScope === "防御乘区") {
+            // 支持 statBonus["无视防御力"] 或 value 两种格式
+            const ignoreValue = (outro.effects.statBonus?.["无视防御力"]) ?? outro.effects.value ?? 0;
+            if (ignoreValue > 0) {
+              defenseIgnore += ignoreValue;
+              defenseIgnoreSources.push(`${teammate.characterName}-${outro.name}: ${(ignoreValue * 100).toFixed(1)}%`);
+            }
+          }
+        });
+      }
+    });
+  }
+
   // 武器技能的无视防御
   if (weapon.skill.enabled) {
     weapon.skill.effects.forEach(effect => {
-      if (effect.effect_Type === "无视防御" && 
+      if (effect.effect_Type === "无视防御" &&
+          effect.enabled !== false &&
           checkWeaponEffectCondition(effect) && 
           checkWeaponEffectDamageType(effect, selectedSkill.damageType)) {
-        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1];
+        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1] * (effect.stacks ?? 1);
         defenseIgnore += value;
         defenseIgnoreSources.push(`${weapon.skill.name}-${effect.name}: ${(value * 100).toFixed(1)}%`);
       }
     });
   }
-  
-  const targetDefense = 792 + 8 * targetLevel;
-  const effectiveDefense = targetDefense * (1 - defenseIgnore);
-  const defenseMultiplier = 1 - effectiveDefense / (effectiveDefense + 800 + 8 * character.baseStats.level);
   
   // ========== 8. 抗性乘区 ==========
   let resistanceReduction = 0;
@@ -611,7 +699,7 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   
   // 角色固有技能的抗性削减
   character.passiveSkills.forEach(passive => {
-    if (passive.enabled && passive.effects.zoneType === "无视抗性") {
+    if (passive.enabled && passive.effectScope === "抗性乘区") {
       if (passive.effects.value) {
         resistanceReduction += passive.effects.value;
         resistanceReductionSources.push(`${passive.name}: ${(passive.effects.value * 100).toFixed(1)}%`);
@@ -622,39 +710,62 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
   // 武器技能的无视抗性
   if (weapon.skill.enabled) {
     weapon.skill.effects.forEach(effect => {
-      if (effect.effect_Type === "无视抗性" && checkWeaponEffectCondition(effect) && checkWeaponEffectDamageType(effect, selectedSkill.damageType)) {
-        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1];
+      if (effect.effect_Type === "无视抗性" &&
+          effect.enabled !== false &&
+          checkWeaponEffectCondition(effect) && checkWeaponEffectDamageType(effect, selectedSkill.damageType)) {
+        const value = effect.valuesByResonance[weapon.baseStats.resonanceLevel - 1] * (effect.stacks ?? 1);
         resistanceReduction += value;
         resistanceReductionSources.push(`${weapon.skill.name}-${effect.name}: ${(value * 100).toFixed(1)}%`);
       }
     });
   }
   
-  const resistanceMultiplier = 1 - (enemyResistance - resistanceReduction);
-  
-  // ========== 9. 次数乘区 ==========
-  let hitsMultiplier = 1.0;
-  
-  // 角色固有技能的次数加成
-  character.passiveSkills.forEach(passive => {
-    if (passive.enabled && passive.effects.zoneType === "次数") {
-      if (passive.effects.value) {
-        hitsMultiplier += passive.effects.value;
+  // ========== 额外加成（手动添加到各乘区，在防御/抗性最终计算之前处理）==========
+  if (input.extraBonuses) {
+    input.extraBonuses.forEach(bonus => {
+      switch (bonus.zone) {
+        case "倍率提升":
+          multiplierBoost += bonus.value;
+          multiplierBoostSources.push(`额外加成${bonus.label ? '(' + bonus.label + ')' : ''}: +${(bonus.value * 100).toFixed(1)}%`);
+          break;
+        case "伤害加深":
+          damageDeepen += bonus.value;
+          damageDeepenSources.push(`额外加成${bonus.label ? '(' + bonus.label + ')' : ''}: +${(bonus.value * 100).toFixed(1)}%`);
+          break;
+        case "伤害加成":
+          damageBonus += bonus.value;
+          damageBonusSources.push(`额外加成${bonus.label ? '(' + bonus.label + ')' : ''}: +${(bonus.value * 100).toFixed(1)}%`);
+          break;
+        case "无视防御":
+          defenseIgnore += bonus.value;
+          defenseIgnoreSources.push(`额外加成${bonus.label ? '(' + bonus.label + ')' : ''}: ${(bonus.value * 100).toFixed(1)}%`);
+          break;
+        case "无视抗性":
+          resistanceReduction += bonus.value;
+          resistanceReductionSources.push(`额外加成${bonus.label ? '(' + bonus.label + ')' : ''}: ${(bonus.value * 100).toFixed(1)}%`);
+          break;
       }
-    }
-  });
-  
+    });
+  }
+
+  // 防御公式：1 - 有效防御 / (有效防御 + 800 + 8×角色等级)
+  // 怪物防御 = 792 + 8×怪物等级，有效防御 = 怪物防御 × (1 - 无视防御)
+  const targetDefense = 792 + 8 * targetLevel;
+  const effectiveDefense = targetDefense * (1 - defenseIgnore);
+  const defenseMultiplier = 1 - effectiveDefense / (effectiveDefense + 800 + 8 * character.baseStats.level);
+
+  const resistanceMultiplier = 1 - (enemyResistance - resistanceReduction);
+
   // ========== 最终伤害计算 ==========
   const finalDamage = 
     baseDamage *
     skillMultiplier *
-    multiplierBoost *
+    (1 + multiplierBoost) *
     critMultiplier *
-    damageDeepen *
+    (1 + damageDeepen) *
     damageBonus *
     defenseMultiplier *
-    resistanceMultiplier *
-    hitsMultiplier;
+    resistanceMultiplier;
   
   return {
     baseDamage,
@@ -665,7 +776,6 @@ export function calculateDamage(input: DamageCalculationInput): DamageCalculatio
     damageBonus,
     defenseMultiplier,
     resistanceMultiplier,
-    hitsMultiplier,
     finalDamage,
     combatStats,
     details: {

@@ -2,7 +2,7 @@
 
 import { Character } from "@/types";
 
-export const CARLOTTA: Character = {
+export const KATIXIYA: Character = {
   baseStats: {
     name: "卡提希娅",
     rarity: 5,
@@ -20,7 +20,7 @@ export const CARLOTTA: Character = {
     baseCritRate: 0.05,
     baseCritDMG: 1.50,
     baseHealBonus: 0,
-    baseElementDMG: 0.30,
+    baseElementDMG: 0.20,
     baseEnergyRegen: 1.00,
     
     imageKey: "katixiya"
@@ -362,7 +362,6 @@ export const CARLOTTA: Character = {
       enabled: false,
       effectScope: "倍率提升",
       effects: {
-        zoneType: "倍率提升",
         conditional: {
           condition: "风蚀效应",
           values: [0, 0.30, 0.30, 0.30, 0.40, 0.50, 0.60, 0.60, 0.60, 0.60]

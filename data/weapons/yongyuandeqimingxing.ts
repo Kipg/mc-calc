@@ -2,7 +2,7 @@
 
 import { Weapon } from "@/types";
 
-export const YONGYUAN_DE_QIMINGXING: Weapon = {
+export const YONGYUANDEQIMINGXING: Weapon = {
   baseStats: {
     name: "永远的启明星",
     rarity: 5,

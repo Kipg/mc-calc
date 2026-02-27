@@ -20,7 +20,7 @@ export const SANHUA: Character = {
     baseCritRate: 0.05,
     baseCritDMG: 1.50,
     baseHealBonus: 0,
-    baseElementDMG: 0.30,
+    baseElementDMG: 0.20,
     baseEnergyRegen: 1.00,
     
     imageKey: "sanhua"
@@ -151,7 +151,7 @@ export const SANHUA: Character = {
     
     // ========== 共鸣解放 ==========
     {
-      name: "焦瞑冻土",
+      name: "共鸣解放·焦瞑冻土",
       skillLevel: 10,
       damageType: "共鸣解放",
       skillCategory: "共鸣解放",
@@ -182,7 +182,6 @@ export const SANHUA: Character = {
       enabled: false,
       effectScope: "倍率提升",
       effects: {
-        zoneType: "倍率提升",
         value: 0.20,
         statBonus: { "共鸣技能伤害提升": 0.20 }
       },
@@ -196,7 +195,6 @@ export const SANHUA: Character = {
     description: "下一位登场角色（或附近队伍中激活延奏技能的角色）普攻伤害加深38%，效果持续14秒，若切换至其他角色则该效果提前结束。",
     effectScope: "伤害加深",
     effects: {
-      zoneType: "伤害加深",
       value: 0.38,
       statBonus: { "普攻伤害加深": 0.38 }
     },

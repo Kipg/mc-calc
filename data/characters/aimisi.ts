@@ -20,7 +20,7 @@ export const AIMISI: Character = {
     baseCritRate: 0.05,
     baseCritDMG: 1.50,
     baseHealBonus: 0,
-    baseElementDMG: 0.30,
+    baseElementDMG: 0.20,
     baseEnergyRegen: 1.00,
     
     imageKey: "aimisi"
@@ -240,7 +240,6 @@ export const AIMISI: Character = {
       enabled: false,
       effectScope: "伤害加深",
       effects: {
-        zoneType: "伤害加深",
         value: 2.00
       },
       affectedSkillNames: ["重击·一段蓄力伤害", "重击·二段蓄力伤害", "机兵·重击·一段蓄力伤害", "机兵·重击·二段蓄力伤害"]
