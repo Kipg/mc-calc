@@ -1,5 +1,4 @@
-<img width="1719" height="408" alt="image" src="https://github.com/user-attachments/assets/2dc411bf-9421-495a-8a02-763a6be983e5" /># 鸣潮工具 — 伤害计算器与副词条权重分析
-
+出于发现漂泊助手停更了于是心血来潮找ai一顿搓。。。。
 一个基于 Next.js 14 和 TypeScript 的鸣潮（Wuthering Waves）伤害计算与副词条权重分析小工具。用于学习、理论构建与模拟伤害分布分析，与游戏官方无关。
 
 ## 主要功能
